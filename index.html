@@ -706,6 +706,28 @@ html[data-attn="resting"] .b1{opacity:.18}
 html[data-attn="resting"] .b2{opacity:.22}
 html[data-attn="resting"] .b3{opacity:.13}
 
+/* ── account & sync panel ──────────────────────────────────────────── */
+.auth{display:grid;gap:11px;max-width:430px}
+.auth input{width:100%;border:1.5px solid var(--_hairline-strong);border-radius:var(--_radius);
+  background:var(--_bg);color:var(--_ink);font-family:inherit;font-size:15px;padding:12px 14px}
+.auth input:focus{outline:0;border-color:var(--_accent);box-shadow:0 0 0 3px var(--_accent-soft)}
+.auth input::placeholder{color:var(--_faint)}
+.auth-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:2px}
+.auth-msg{min-height:1.2em}
+.auth-msg.bad{color:var(--_accent)}
+.acct{display:flex;align-items:center;gap:14px;flex-wrap:wrap;max-width:560px;
+  padding:16px 18px;border:1.5px solid var(--_hairline-strong);border-radius:var(--_radius-lg)}
+.acct .who{flex:1;min-width:140px}
+.acct .who b{display:block;font-size:15px;font-weight:700;letter-spacing:-.01em}
+.acct .who span{font-size:12px;color:var(--_muted)}
+.sync-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--_ok)}
+.sync-dot.busy{background:var(--_warn)}
+.vault .sync{display:inline-flex;align-items:center;gap:6px;font-size:11px;
+  font-weight:700;letter-spacing:.04em;color:var(--_muted)}
+.vault .sync i{width:7px;height:7px;border-radius:50%;background:var(--_ok);display:inline-block}
+.vault .sync i.busy{background:var(--_warn)}
+.vault .sync i.off{background:var(--_faint)}
+
 @media (max-width:620px){
   .page{padding:0 18px 100px}
   .hint,.ta-wrap,.health{margin-left:0}
@@ -1040,7 +1062,7 @@ html[data-attn="resting"] .b3{opacity:.13}
       <button id="wipe" class="danger">Erase everything</button>
     </div>
     <input type="file" id="fileIn" accept=".json,application/json" hidden>
-    <div class="note">
+    <div class="note" id="whereNote">
       <b>Where your journal lives.</b><br>
       Entries are saved in this browser's local storage the moment you type — nothing
       leaves your machine, and there is no account or server.<br><br>
@@ -1053,6 +1075,9 @@ html[data-attn="resting"] .b3{opacity:.13}
       <b>Markdown export</b> writes a single greppable file with <code>## 2026-07-31</code>
       headers, so your journal outlives this app.
     </div>
+
+    <div class="micro section-h">Account &amp; sync</div>
+    <div id="acct"></div>
   </section>
 
 </div><!-- /page -->
@@ -1313,8 +1338,11 @@ function renderVault(){
     : days===0 ? 'backed up today' : days===1 ? 'backed up yesterday' : `backed up ${days} days ago`;
   const v=$('#vault');
   v.className='vault'+(warn?' warn':'');
+  const syncBit = (typeof sbOn==='function'&&sbOn()&&AUTH)
+    ? `<span style="opacity:.4">·</span><span class="sync"><i class="${syncing?'busy':''}"></i>${syncing?'syncing':'synced'}</span>`
+    : '';
   v.innerHTML=`<span><b>${n}</b> ${n===1?'entry':'entries'}</span>
-    <span style="opacity:.4">·</span><span>${esc(when)}</span>
+    <span style="opacity:.4">·</span><span>${esc(when)}</span>${syncBit}
     <span class="vault-sp"></span>
     <button id="vaultBtn">${warn?'Back up now':'Back up'}</button>`;
   $('#vaultBtn').onclick=()=>doBackup();
@@ -1573,6 +1601,7 @@ function seal(){
   toast(s.current>1 ? `Sealed. ${s.current} nights in a row.` : 'Sealed.');
   renderVault();
   refreshDot();
+  if(typeof syncSoon==='function') syncSoon();
 }
 $('#sealBtn').onclick=seal;
 document.addEventListener('keydown',ev=>{
@@ -1852,6 +1881,7 @@ function saveWeek(){
   const st=$('#stamp'); st.classList.remove('go'); void st.offsetWidth; st.classList.add('go');
   window.fxSeal&&fxSeal($('#wkSaveBtn'));
   toast('Weekly review saved.'); renderVault(); refreshDot();
+  if(typeof syncSoon==='function') syncSoon();
 }
 $('#wkSaveBtn').onclick=saveWeek;
 $('#wPrev').onclick=()=>{ wkAnchor=addDays(wkAnchor,-7); renderWeekly(); };
@@ -2258,11 +2288,199 @@ $('#wipe').onclick=()=>{
   window.__fx={counts:()=>({field:pts.length,parts:parts.length,comets:comets.length}),att:()=>ATT,burst,sparkAt};
 })();
 
+/* ══════════════════════════════════════════════════════════════
+   SYNC — optional Supabase backend, zero dependencies.
+
+   Supabase's own auth does the real work (password hashing, token
+   issue/refresh, the user table, Row Level Security). This is only the
+   client glue: a form, the calls, and holding the token.
+
+   Talks to the REST endpoints with fetch() rather than pulling in
+   supabase-js, so the app stays self-contained and works offline as an
+   installed PWA.
+
+   Unconfigured, every function here is inert and the app behaves exactly
+   as before: local-only, no account, nothing leaves the device.
+   ══════════════════════════════════════════════════════════════ */
+const SB_BAKED={url:'',anon:''};        /* filled in at build time, or via the UI */
+const SB_KEY='nightfall.sb', AUTH_KEY='nightfall.auth';
+let SB=(()=>{ try{ const c=JSON.parse(localStorage.getItem(SB_KEY));
+  if(c&&c.url&&c.anon) return c; }catch(e){} return Object.assign({},SB_BAKED); })();
+let AUTH=(()=>{ try{ return JSON.parse(localStorage.getItem(AUTH_KEY))||null; }catch(e){ return null; } })();
+const sbOn=()=>!!(SB.url&&SB.anon);
+
+function saveSB(c){ SB=c; c&&c.url?localStorage.setItem(SB_KEY,JSON.stringify(c)):localStorage.removeItem(SB_KEY); renderAccount(); renderVault(); }
+function saveAuth(a){ AUTH=a; a?localStorage.setItem(AUTH_KEY,JSON.stringify(a)):localStorage.removeItem(AUTH_KEY); renderAccount(); renderVault(); }
+
+async function sbAuthCall(path,body){
+  const r=await fetch(SB.url.replace(/\/$/,'')+'/auth/v1/'+path,{
+    method:'POST',headers:{apikey:SB.anon,'Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error_description||j.msg||j.message||j.error||('HTTP '+r.status));
+  return j;
+}
+function storeSession(j){
+  if(!j||!j.access_token) return null;
+  saveAuth({token:j.access_token,refresh:j.refresh_token,
+    exp:Date.now()+((j.expires_in||3600)*1000),
+    email:(j.user&&j.user.email)||'',uid:(j.user&&j.user.id)||''});
+  return AUTH;
+}
+async function signIn(email,pw){ return storeSession(await sbAuthCall('token?grant_type=password',{email,password:pw})); }
+async function signUp(email,pw){
+  const j=await sbAuthCall('signup',{email,password:pw});
+  return j.access_token ? storeSession(j) : null;   /* null => confirm your email */
+}
+async function refreshSession(){
+  if(!AUTH||!AUTH.refresh) return null;
+  try{ return storeSession(await sbAuthCall('token?grant_type=refresh_token',{refresh_token:AUTH.refresh})); }
+  catch(e){ saveAuth(null); return null; }
+}
+async function bearer(){
+  if(!AUTH) return null;
+  if(Date.now() > AUTH.exp-60000) await refreshSession();
+  return AUTH ? AUTH.token : null;
+}
+async function sbRest(path,opts){
+  const t=await bearer(); if(!t) throw new Error('not signed in');
+  const o=opts||{};
+  const r=await fetch(SB.url.replace(/\/$/,'')+'/rest/v1/'+path,Object.assign({},o,{
+    headers:Object.assign({apikey:SB.anon,Authorization:'Bearer '+t,'Content-Type':'application/json'},o.headers||{})}));
+  const txt=await r.text();
+  if(!r.ok) throw new Error(txt.slice(0,160)||('HTTP '+r.status));
+  return txt?JSON.parse(txt):null;
+}
+
+/* Full reconcile: pull everything, keep whichever side is newer by
+   updatedAt, then push anything local the server doesn't have or has older.
+   Same newer-wins rule the backup importer already uses. */
+let syncing=false;
+async function syncNow(quiet){
+  if(!sbOn()||!AUTH||syncing||!navigator.onLine) return;
+  syncing=true; renderAccount(); renderVault();
+  try{
+    const [re,rw]=await Promise.all([
+      sbRest('entries?select=date,data,updated_at'),
+      sbRest('weeks?select=week,data,updated_at')]);
+    let pulled=0;
+    (re||[]).forEach(row=>{
+      const mine=DB.entries[row.date];
+      if(!mine || new Date(row.updated_at) > new Date(mine.updatedAt||0)){ DB.entries[row.date]=row.data; pulled++; }
+    });
+    (rw||[]).forEach(row=>{
+      const mine=DB.weeks[row.week];
+      if(!mine || new Date(row.updated_at) > new Date(mine.updatedAt||0)){ DB.weeks[row.week]=row.data; pulled++; }
+    });
+    const remE={}; (re||[]).forEach(r=>remE[r.date]=r.updated_at);
+    const remW={}; (rw||[]).forEach(r=>remW[r.week]=r.updated_at);
+    const now=new Date().toISOString();
+    const pushE=Object.keys(DB.entries).filter(k=>hasContent(DB.entries[k]))
+      .filter(k=>!remE[k]||new Date(DB.entries[k].updatedAt||0)>new Date(remE[k]))
+      .map(k=>({user_id:AUTH.uid,date:k,data:DB.entries[k],updated_at:DB.entries[k].updatedAt||now}));
+    const pushW=Object.keys(DB.weeks)
+      .filter(k=>!remW[k]||new Date(DB.weeks[k].updatedAt||0)>new Date(remW[k]))
+      .map(k=>({user_id:AUTH.uid,week:k,data:DB.weeks[k],updated_at:DB.weeks[k].updatedAt||now}));
+    const H={Prefer:'resolution=merge-duplicates'};
+    if(pushE.length) await sbRest('entries',{method:'POST',headers:H,body:JSON.stringify(pushE)});
+    if(pushW.length) await sbRest('weeks',{method:'POST',headers:H,body:JSON.stringify(pushW)});
+    DB.meta.lastSyncAt=new Date().toISOString();
+    save();
+    if(pulled){ renderComposer(); refreshDot(); seen.delete(VIEW); if(VIEW==='archive')renderArchive(); if(VIEW==='patterns')renderPatterns(); if(VIEW==='weekly')renderWeekly(); }
+    renderVault();
+    if(!quiet) toast('Synced. '+pulled+' in, '+(pushE.length+pushW.length)+' out.');
+  }catch(e){
+    if(!quiet) toast('Sync failed — '+String(e.message||e).slice(0,70),true);
+  }finally{ syncing=false; renderAccount(); renderVault(); }
+}
+const syncSoon=debounce(()=>syncNow(true),2500);
+
+function renderAccount(){
+  const el=$('#acct'); if(!el) return;
+  /* the local-only paragraph above stops being true once sync is on */
+  const note=$('#whereNote');
+  if(note){
+    const p=note.querySelector('b');
+    if(sbOn()&&AUTH){
+      note.dataset.mode='sync';
+      p.nextSibling && (p.parentNode.childNodes[2].textContent=
+        " Entries are saved in this browser the moment you type, and copied to your "+
+        "Supabase project so your other devices can read them. ");
+    }else if(note.dataset.mode==='sync'){
+      note.dataset.mode='local';
+      p.parentNode.childNodes[2].textContent=
+        " Entries are saved in this browser's local storage the moment you type — nothing "+
+        "leaves your machine, and there is no account or server. ";
+    }
+  }
+  if(!sbOn()){
+    el.innerHTML='<div class="note" style="margin-top:0"><b>Sync is off — this device only.</b><br>'
+      +'Entries never leave this browser. To read the same journal on your phone '
+      +'and laptop, connect a Supabase project below (free). Setup steps are in '
+      +'<code>supabase-setup.sql</code> in the repo.</div>'
+      +'<form class="auth" id="sbForm" style="margin-top:16px">'
+      +'<input type="url" id="sbUrl" placeholder="https://xxxxx.supabase.co" autocomplete="off" required>'
+      +'<input type="text" id="sbKey" placeholder="anon / public key" autocomplete="off" required>'
+      +'<div class="auth-actions"><button type="submit" class="btn-primary"><span>Connect</span></button></div>'
+      +'<div class="micro auth-msg" id="sbMsg"></div></form>';
+    $('#sbForm').onsubmit=ev=>{
+      ev.preventDefault();
+      const url=$('#sbUrl').value.trim().replace(/\/$/,''), anon=$('#sbKey').value.trim();
+      if(!/^https:\/\/.+\.supabase\.co$/.test(url)){ $('#sbMsg').textContent='That URL looks wrong — it should end in .supabase.co'; $('#sbMsg').className='micro auth-msg bad'; return; }
+      saveSB({url,anon}); toast('Connected. Now create an account or sign in.');
+    };
+    return;
+  }
+  if(!AUTH){
+    el.innerHTML='<form class="auth" id="authForm">'
+      +'<input type="email" id="authEmail" placeholder="you@example.com" autocomplete="username" required>'
+      +'<input type="password" id="authPass" placeholder="password — 8 characters or more" autocomplete="current-password" minlength="8" required>'
+      +'<div class="auth-actions">'
+      +'<button type="submit" class="btn-primary"><span>Sign in</span></button>'
+      +'<button type="button" class="reader-edit" id="authUp">Create account</button>'
+      +'<button type="button" class="reader-edit" id="sbForget">Change project</button></div>'
+      +'<div class="micro auth-msg" id="authMsg"></div></form>';
+    const msg=(t,bad)=>{ const m=$('#authMsg'); m.textContent=t; m.className='micro auth-msg'+(bad?' bad':''); };
+    const creds=()=>[$('#authEmail').value.trim(),$('#authPass').value];
+    const go=async(fn,label)=>{
+      const [e,pw]=creds();
+      if(!e||pw.length<8){ msg('Enter an email and a password of at least 8 characters.',true); return; }
+      msg(label+'…');
+      try{
+        const a=await fn(e,pw);
+        if(a){ msg(''); toast('Signed in as '+a.email); await syncNow(); }
+        else msg('Account created. Check your email to confirm, then sign in.');
+      }catch(err){ msg(String(err.message||err).slice(0,120),true); }
+    };
+    $('#authForm').onsubmit=ev=>{ ev.preventDefault(); go(signIn,'Signing in'); };
+    $('#authUp').onclick=()=>go(signUp,'Creating account');
+    $('#sbForget').onclick=()=>{ saveAuth(null); saveSB({url:'',anon:''}); };
+    return;
+  }
+  const last=DB.meta.lastSyncAt;
+  const ago=last?Math.round((Date.now()-new Date(last).getTime())/60000):null;
+  const when=!last?'not synced yet':ago<1?'synced just now':ago<60?('synced '+ago+' min ago'):('synced '+Math.round(ago/60)+' h ago');
+  el.innerHTML='<div class="acct"><span class="sync-dot'+(syncing?' busy':'')+'"></span>'
+    +'<span class="who"><b>'+esc(AUTH.email||'signed in')+'</b><span>'+esc(syncing?'syncing…':when)+'</span></span>'
+    +'<button class="btn-primary" id="syncBtn"><span>'+(syncing?'Syncing':'Sync now')+'</span></button>'
+    +'<button class="reader-edit" id="outBtn">Sign out</button></div>'
+    +'<div class="note">Your entries are on this device <b>and</b> in your Supabase project, '
+    +'readable only by this account. Sign in on your phone with the same email to see the same journal.</div>';
+  $('#syncBtn').onclick=()=>syncNow();
+  $('#outBtn').onclick=()=>{ saveAuth(null); toast('Signed out. Entries stay on this device.'); };
+}
+
+/* keep it current without the user asking */
+if(sbOn()&&AUTH){ syncNow(true); }
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) syncNow(true); });
+window.addEventListener('online',()=>syncNow(true));
+
 renderVault();
 renderComposer();
 refreshDot();
 moveIndicator();
 markSeen($('#v-tonight'));   /* Tonight is open at boot, so it stages itself */
+renderAccount();
 /* Re-measure once Inter lands — a fallback-font measurement leaves every
    field a few px short, and the nav indicator a few px wide. */
 if(document.fonts&&document.fonts.ready){
