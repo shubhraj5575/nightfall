@@ -2302,7 +2302,18 @@ window.addEventListener('storage',ev=>{
    ══════════════════════════════════════════════════════════════ */
 if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
   window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    /* updateViaCache:'none' stops the browser HTTP-caching sw.js itself —
+       without it the update check can read a stale worker and never notice
+       a new deploy. */
+    navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>{
+      reg.update();
+      /* When a new worker takes over, the page is showing the old shell.
+         Reload once (guarded, so it can never loop) to pick up the new one. */
+      let reloaded=false;
+      navigator.serviceWorker.addEventListener('controllerchange',()=>{
+        if(reloaded) return; reloaded=true; location.reload();
+      });
+    }).catch(()=>{});
   });
 }
 </script>

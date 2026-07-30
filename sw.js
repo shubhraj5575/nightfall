@@ -2,7 +2,10 @@
    Navigations are network-first so app updates arrive whenever you are
    online, with the cached shell as the offline fallback. Static assets
    (fonts, icons) are cache-first — they change only with a version bump. */
-const CACHE = 'nightfall-v1';
+/* Bump this on every deploy that changes app files. The SW only re-installs
+   when THIS file's bytes change — editing index.html alone leaves the old
+   cached shell in place, so an installed app would never see updates. */
+const CACHE = 'nightfall-v2';
 const ASSETS = [
   './',
   './index.html',
