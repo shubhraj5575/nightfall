@@ -2302,7 +2302,7 @@ $('#wipe').onclick=()=>{
    Unconfigured, every function here is inert and the app behaves exactly
    as before: local-only, no account, nothing leaves the device.
    ══════════════════════════════════════════════════════════════ */
-const SB_BAKED={url:'',anon:''};        /* filled in at build time, or via the UI */
+const SB_BAKED={url:'https://iqgaisisioalyfwnqjou.supabase.co',anon:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxZ2Fpc2lzaW9hbHlmd25xam91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU0MzAwMDIsImV4cCI6MjEwMTAwNjAwMn0.4e9fb5_Py8vVAR8a87TH18WRMPMJtMyVlZA9V0y2zGc'}; /* anon key: safe to embed, protected by RLS not secrecy */
 const SB_KEY='nightfall.sb', AUTH_KEY='nightfall.auth';
 let SB=(()=>{ try{ const c=JSON.parse(localStorage.getItem(SB_KEY));
   if(c&&c.url&&c.anon) return c; }catch(e){} return Object.assign({},SB_BAKED); })();
