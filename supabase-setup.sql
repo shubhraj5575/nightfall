@@ -30,3 +30,10 @@ create policy "own entries" on public.entries
 drop policy if exists "own weeks" on public.weeks;
 create policy "own weeks" on public.weeks
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Explicit grants, so this works whether or not "Automatically expose new
+-- tables" was ticked at project creation. Safe because RLS above still
+-- restricts every query to the signed-in user's own rows.
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.entries to authenticated;
+grant select, insert, update, delete on public.weeks   to authenticated;
