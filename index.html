@@ -706,6 +706,31 @@ html[data-attn="resting"] .b1{opacity:.18}
 html[data-attn="resting"] .b2{opacity:.22}
 html[data-attn="resting"] .b3{opacity:.13}
 
+/* ── sign-in gate ── */
+.gate{position:fixed;inset:0;z-index:200;display:none;place-items:center;
+  padding:28px 24px;overflow-y:auto}
+.gate.on{display:grid}
+html[data-gate="on"] .page{display:none}
+.gate-card{width:min(430px,100%);display:grid;gap:18px}
+.gate-mark{font-family:var(--_display);font-size:42px;line-height:1;letter-spacing:.02em;
+  text-transform:uppercase}
+.gate-mark span{color:var(--_accent)}
+.gate h2{font-size:clamp(1.6rem,4.4vw,2.1rem);font-weight:900;letter-spacing:-.04em;
+  line-height:1.05;margin-top:6px}
+.gate p.lede{font-size:14.5px;line-height:1.6;color:var(--_muted)}
+.gate input{width:100%;border:1.5px solid var(--_hairline-strong);border-radius:var(--_radius);
+  background:var(--_bg);color:var(--_ink);font-family:inherit;font-size:16px;padding:13px 15px}
+.gate input:focus{outline:0;border-color:var(--_accent);box-shadow:0 0 0 3px var(--_accent-soft)}
+.gate input::placeholder{color:var(--_faint)}
+.gate .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.gate .msg{font-size:13px;line-height:1.5;min-height:1.3em;color:var(--_muted)}
+.gate .msg.bad{color:var(--_accent)}
+.gate .switch{background:none;border:0;padding:0;cursor:pointer;color:var(--_accent);
+  font-family:inherit;font-size:13.5px;font-weight:700;text-decoration:underline;
+  text-underline-offset:3px}
+.gate .fine{font-size:12px;line-height:1.55;color:var(--_faint)}
+.gate .big{font-size:34px;line-height:1}
+
 /* ── account & sync panel ──────────────────────────────────────────── */
 .auth{display:grid;gap:11px;max-width:430px}
 .auth input{width:100%;border:1.5px solid var(--_hairline-strong);border-radius:var(--_radius);
@@ -785,6 +810,16 @@ html[data-attn="resting"] .b3{opacity:.13}
 <div class="ambient" aria-hidden="true">
   <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
   <div class="motes" id="motes"></div>
+</div>
+
+<div class="gate" id="gate" aria-live="polite">
+  <div class="gate-card">
+    <div>
+      <div class="gate-mark">Night<span>fall</span></div>
+      <div class="micro" style="margin-top:4px">A personal almanac</div>
+    </div>
+    <div id="gateBody"></div>
+  </div>
 </div>
 
 <div class="page">
@@ -2310,7 +2345,7 @@ let AUTH=(()=>{ try{ return JSON.parse(localStorage.getItem(AUTH_KEY))||null; }c
 const sbOn=()=>!!(SB.url&&SB.anon);
 
 function saveSB(c){ SB=c; c&&c.url?localStorage.setItem(SB_KEY,JSON.stringify(c)):localStorage.removeItem(SB_KEY); renderAccount(); renderVault(); }
-function saveAuth(a){ AUTH=a; a?localStorage.setItem(AUTH_KEY,JSON.stringify(a)):localStorage.removeItem(AUTH_KEY); renderAccount(); renderVault(); }
+function saveAuth(a){ AUTH=a; a?localStorage.setItem(AUTH_KEY,JSON.stringify(a)):localStorage.removeItem(AUTH_KEY); renderAccount(); renderVault(); if(typeof renderGate==='function') renderGate(); }
 
 async function sbAuthCall(path,body){
   const r=await fetch(SB.url.replace(/\/$/,'')+'/auth/v1/'+path,{
@@ -2328,9 +2363,44 @@ function storeSession(j){
   return AUTH;
 }
 async function signIn(email,pw){ return storeSession(await sbAuthCall('token?grant_type=password',{email,password:pw})); }
+/* Where the confirmation link should land. Without redirect_to, Supabase
+   falls back to the project's Site URL — which defaults to
+   http://localhost:3000 and produces a dead link. */
+const appOrigin=()=>location.origin+location.pathname.replace(/[^/]*$/,'');
 async function signUp(email,pw){
-  const j=await sbAuthCall('signup',{email,password:pw});
+  const j=await sbAuthCall('signup?redirect_to='+encodeURIComponent(appOrigin()),
+    {email,password:pw});
   return j.access_token ? storeSession(j) : null;   /* null => confirm your email */
+}
+async function resendConfirm(email){
+  return sbAuthCall('resend?redirect_to='+encodeURIComponent(appOrigin()),
+    {type:'signup',email});
+}
+/* The confirmation link returns with tokens (or an error) in the URL hash. */
+function readAuthHash(){
+  const h=location.hash;
+  if(!h||h.length<2) return null;
+  const q=new URLSearchParams(h.slice(1));
+  const at=q.get('access_token'), err=q.get('error_description')||q.get('error');
+  if(!at&&!err) return null;
+  history.replaceState(null,'',location.pathname+location.search);
+  if(at){
+    saveAuth({token:at,refresh:q.get('refresh_token')||'',
+      exp:Date.now()+((Number(q.get('expires_in'))||3600)*1000),email:'',uid:''});
+    return {ok:true};
+  }
+  return {ok:false,msg:decodeURIComponent(String(err).replace(/\+/g,' '))};
+}
+/* The hash gives us tokens but not who they belong to. */
+async function fetchUser(){
+  const t=await bearer(); if(!t) return;
+  try{
+    const r=await fetch(SB.url.replace(/\/$/,'')+'/auth/v1/user',
+      {headers:{apikey:SB.anon,Authorization:'Bearer '+t}});
+    if(!r.ok) return;
+    const u=await r.json();
+    AUTH.email=u.email||''; AUTH.uid=u.id||''; saveAuth(AUTH);
+  }catch(e){}
 }
 async function refreshSession(){
   if(!AUTH||!AUTH.refresh) return null;
@@ -2469,7 +2539,91 @@ function renderAccount(){
   $('#outBtn').onclick=()=>{ saveAuth(null); toast('Signed out. Entries stay on this device.'); };
 }
 
-/* keep it current without the user asking */
+/* ══════════════════════════════════════════════════════════════
+   THE GATE — sign in before the journal opens.
+   Only blocks when signed out; a returning user's session is already in
+   localStorage, so they land straight in the app and still work offline.
+   ══════════════════════════════════════════════════════════════ */
+let gateMode='in';               /* 'in' | 'up' | 'check' */
+let gateNote='';
+function gateOpen(){ return sbOn() && !AUTH; }
+function renderGate(){
+  const g=$('#gate'), b=$('#gateBody');
+  if(!g||!b) return;
+  const open=gateOpen();
+  g.classList.toggle('on',open);
+  document.documentElement.dataset.gate = open ? 'on' : 'off';
+  if(!open) return;
+
+  if(gateMode==='check'){
+    b.innerHTML='<div class="big">✉️</div>'
+      +'<h2>Check your email</h2>'
+      +'<p class="lede">We sent a confirmation link to <b>'+esc(gateNote)+'</b>. '
+      +'Open it to finish creating your account — then come back and sign in.</p>'
+      +'<div class="row"><button class="reader-edit" id="gResend">Resend email</button>'
+      +'<button class="switch" id="gBack">Back to sign in</button></div>'
+      +'<div class="msg" id="gMsg"></div>'
+      +'<p class="fine">No email after a minute or two? Check spam. Supabase’s free '
+      +'mailer is rate-limited, so a resend may take a moment.</p>';
+    $('#gBack').onclick=()=>{ gateMode='in'; renderGate(); };
+    $('#gResend').onclick=async()=>{
+      const m=$('#gMsg'); m.className='msg'; m.textContent='Sending…';
+      try{ await resendConfirm(gateNote); m.textContent='Sent. Check your inbox.'; }
+      catch(e){ m.className='msg bad'; m.textContent=String(e.message||e).slice(0,120); }
+    };
+    return;
+  }
+
+  const up = gateMode==='up';
+  b.innerHTML='<h2>'+(up?'Create your account':'Welcome back')+'</h2>'
+    +'<p class="lede">'+(up
+      ? 'One account keeps tonight’s entry on every device you write from.'
+      : 'Sign in to open your journal.')+'</p>'
+    +'<form id="gForm" style="display:grid;gap:12px">'
+    +'<input type="email" id="gEmail" placeholder="you@example.com" autocomplete="username" required>'
+    +'<input type="password" id="gPass" placeholder="password — 8 characters or more" '
+    +'autocomplete="'+(up?'new-password':'current-password')+'" minlength="8" required>'
+    +'<button type="submit" class="btn-primary" style="justify-content:center"><span>'
+    +(up?'Create account':'Sign in')+'</span></button></form>'
+    +'<div class="msg" id="gMsg">'+esc(gateNote||'')+'</div>'
+    +'<div class="row">'+(up
+      ? '<span class="fine">Already have an account?</span><button class="switch" id="gSwap">Sign in</button>'
+      : '<span class="fine">First time here?</span><button class="switch" id="gSwap">Create an account</button>')
+    +'</div>';
+  gateNote='';
+  $('#gSwap').onclick=()=>{ gateMode=up?'in':'up'; gateNote=''; renderGate(); };
+  $('#gForm').onsubmit=async ev=>{
+    ev.preventDefault();
+    const email=$('#gEmail').value.trim(), pw=$('#gPass').value;
+    const m=$('#gMsg'); m.className='msg';
+    if(!email||pw.length<8){ m.className='msg bad'; m.textContent='Enter an email and a password of at least 8 characters.'; return; }
+    m.textContent = up?'Creating account…':'Signing in…';
+    try{
+      const a = up ? await signUp(email,pw) : await signIn(email,pw);
+      if(a){ await fetchUser(); renderGate(); enterApp(); }
+      else { gateMode='check'; gateNote=email; renderGate(); }
+    }catch(err){
+      m.className='msg bad';
+      let t=String(err.message||err);
+      if(/email not confirmed/i.test(t)){ gateMode='check'; gateNote=email; renderGate(); return; }
+      m.textContent=t.slice(0,140);
+    }
+  };
+}
+/* everything that should happen once the journal is actually open */
+function enterApp(){
+  renderVault(); renderComposer(); refreshDot(); renderAccount();
+  moveIndicator();
+  syncNow();
+}
+
+/* boot: a confirmation link lands here with tokens in the hash */
+(function(){
+  const cb=readAuthHash();
+  if(cb&&cb.ok){ fetchUser().then(()=>{ renderGate(); enterApp(); }); }
+  else if(cb&&!cb.ok){ gateMode='in'; gateNote=cb.msg||'That link has expired. Sign in, or create the account again.'; }
+  renderGate();
+})();
 if(sbOn()&&AUTH){ syncNow(true); }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) syncNow(true); });
 window.addEventListener('online',()=>syncNow(true));
