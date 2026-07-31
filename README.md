@@ -20,3 +20,9 @@ Open `index.html`, or serve statically (any host). Service worker requires http(
 
 Fonts: Inter and Bebas Neue, self-hosted under their SIL OFL licenses
 (`assets/fonts/*-OFL.txt`).
+
+## Deploying
+
+Pushing to `master` publishes to GitHub Pages automatically.
+Vercel deploys from the same repo — see Vercel project settings for
+whether Git auto-deploy is connected.
