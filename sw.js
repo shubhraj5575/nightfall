@@ -5,7 +5,7 @@
 /* Bump this on every deploy that changes app files. The SW only re-installs
    when THIS file's bytes change — editing index.html alone leaves the old
    cached shell in place, so an installed app would never see updates. */
-const CACHE = 'nightfall-v4';
+const CACHE = 'nightfall-v5';
 const ASSETS = [
   './',
   './index.html',

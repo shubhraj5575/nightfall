@@ -2438,7 +2438,7 @@ function renderAccount(){
       +'<div class="auth-actions">'
       +'<button type="submit" class="btn-primary"><span>Sign in</span></button>'
       +'<button type="button" class="reader-edit" id="authUp">Create account</button>'
-      +'<button type="button" class="reader-edit" id="sbForget">Change project</button></div>'
+      +'</div>'
       +'<div class="micro auth-msg" id="authMsg"></div></form>';
     const msg=(t,bad)=>{ const m=$('#authMsg'); m.textContent=t; m.className='micro auth-msg'+(bad?' bad':''); };
     const creds=()=>[$('#authEmail').value.trim(),$('#authPass').value];
@@ -2454,7 +2454,6 @@ function renderAccount(){
     };
     $('#authForm').onsubmit=ev=>{ ev.preventDefault(); go(signIn,'Signing in'); };
     $('#authUp').onclick=()=>go(signUp,'Creating account');
-    $('#sbForget').onclick=()=>{ saveAuth(null); saveSB({url:'',anon:''}); };
     return;
   }
   const last=DB.meta.lastSyncAt;
